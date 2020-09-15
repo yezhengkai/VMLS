@@ -286,3 +286,84 @@ def mols_solve(As, bs, lambdas):
     Atil = np.vstack([np.sqrt(lambdas[i])*As[i] for i in range(k)])
     btil = np.hstack([np.sqrt(lambdas[i])*bs[i] for i in range(k)])
     return np.linalg.lstsq(Atil, btil, rcond=None)[0]
+
+
+# ========== chapter 16 ==========
+def cls_solve(A, b, C, d):
+
+    # convert 1-d vector to 2-d column vector
+    _ndim = b.ndim
+    if _ndim == 1:
+        b = np.vstack(b)
+        d = np.vstack(d)
+
+    m, n = A.shape
+    p, n = C.shape
+    Q, R = np.linalg.qr(np.vstack([A, C]))
+    Q1 = Q[0:m, :]
+    Q2 = Q[m:m+p, :]
+    Qtil, Rtil = np.linalg.qr(Q2.T)
+    w = np.linalg.lstsq(
+        Rtil, 
+        (2 * Qtil.T @ (Q1.T @ b) 
+         - 2 * np.linalg.lstsq(Rtil.T, d, rcond=None)[0]),
+        rcond=None
+    )[0]
+    xhat = np.linalg.lstsq(R, (Q1.T @ b - Q2.T @ w/2), rcond=None)[0]
+    
+    if _ndim == 1:
+        return xhat.flatten()  # shape = (n,)
+    else:
+        return xhat  # shape = (n, b.shape[1])
+
+
+def cls_solve_kkt(A, b, C, d):
+
+    # convert 1-d vector to 2-d column vector
+    _ndim = b.ndim
+    if _ndim == 1:
+        b = np.vstack(b)
+        d = np.vstack(d)
+
+    m, n = A.shape
+    p, n = C.shape
+    G = A.T @ A  # Gram matrix
+    # KKT matrix
+    KKT = np.vstack(
+        [np.hstack([2*G, C.T]),
+         np.hstack([C, np.zeros((p, p))])]
+    )
+    xzhat = np.vstack(
+        np.linalg.lstsq(KKT, np.vstack([2*A.T @ b, d]), rcond=None)[0]
+    )
+    
+    if _ndim == 1:
+        xhat = (xzhat[0:n, :]).flatten()  # shape = (n,)
+    else:
+        xhat = xzhat[0:n, :]  # shape = (n, b.shape[1])
+    
+    return xhat
+
+
+def cls_solve_sparse(A, b, C, d):
+    
+    # convert 1-d vector to 2-d column vector
+    _ndim = b.ndim
+    if _ndim == 1:
+        b = np.vstack(b)
+        d = np.vstack(d)
+        
+    m, n = A.shape
+    p, n = C.shape
+    bigA = np.vstack([np.hstack([np.zeros((n, n)), A.T, C.T]),
+                      np.hstack([A, -np.eye(m)/2, np.zeros((m, p))]),
+                      np.hstack([C, np.zeros((p,m)), np.zeros((p,p))])])
+    
+    xyzhat = np.linalg.lstsq(bigA, np.vstack([np.zeros((n, _ndim)), b, d]), rcond=None)[0]
+    
+    if _ndim == 1:
+        xhat = (xyzhat[:n]).flatten()  # shape = (n,)
+    else:
+        xhat = xyzhat[:n] # shape = (n, b.shape[1])
+    
+    return xhat
