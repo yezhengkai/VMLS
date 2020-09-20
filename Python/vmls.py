@@ -311,10 +311,7 @@ def cls_solve(A, b, C, d):
     )[0]
     xhat = np.linalg.lstsq(R, (Q1.T @ b - Q2.T @ w/2), rcond=None)[0]
     
-    if _ndim == 1:
-        return xhat.flatten()  # shape = (n,)
-    else:
-        return xhat  # shape = (n, b.shape[1])
+    return xhat  # shape = (n, b.shape[1])
 
 
 def cls_solve_kkt(A, b, C, d):
@@ -336,13 +333,7 @@ def cls_solve_kkt(A, b, C, d):
     xzhat = np.vstack(
         np.linalg.lstsq(KKT, np.vstack([2*A.T @ b, d]), rcond=None)[0]
     )
-    
-    if _ndim == 1:
-        xhat = (xzhat[0:n, :]).flatten()  # shape = (n,)
-    else:
-        xhat = xzhat[0:n, :]  # shape = (n, b.shape[1])
-    
-    return xhat
+    return xzhat[0:n, :]  # shape = (n, b.shape[1])
 
 
 def cls_solve_sparse(A, b, C, d):
@@ -360,10 +351,76 @@ def cls_solve_sparse(A, b, C, d):
                       np.hstack([C, np.zeros((p,m)), np.zeros((p,p))])])
     
     xyzhat = np.linalg.lstsq(bigA, np.vstack([np.zeros((n, _ndim)), b, d]), rcond=None)[0]
+    return xyzhat[:n]  # shape = (n, b.shape[1])
+
+
+# ========== chapter 17 ==========
+def port_opt(R, rho):
+    """portfolio optimization"""
+    T, n = R.shape
+    mu = np.sum(R, axis = 0).T / T
+    KKT = np.vstack([np.column_stack([2*R.T @ R, np.ones(n), mu]),
+                     np.hstack([np.ones(n).T, 0 , 0]),
+                     np.hstack([mu.T, 0, 0])])
+    wz1z2 = np.linalg.lstsq(KKT, np.hstack([2*rho*T*mu, 1, rho]), rcond=None)[0]
+    w = wz1z2[:n]
+    return w
+
+
+def lqr(A, B, C, x_init, x_des, T, rho):
+    """Linear quadratic control"""
+    n = A.shape[0]
+    m = B.shape[1]
+    p = C.shape[0]
+    q = x_init.shape[1]
     
-    if _ndim == 1:
-        xhat = (xyzhat[:n]).flatten()  # shape = (n,)
-    else:
-        xhat = xyzhat[:n] # shape = (n, b.shape[1])
+    Atil = np.vstack([np.hstack([np.kron(np.eye(T), C), np.zeros((p*T, m*(T-1)))]),
+                      np.hstack([np.zeros((m*(T-1), n*T)), np.sqrt(rho)*np.eye(m*(T-1))])])
     
-    return xhat
+    btil = np.zeros((p*T+m*(T-1), q))
+    
+    # We'll construct Ctilde bit by bit
+    Ctil11 = np.hstack([np.kron(np.eye(T-1), A), np.zeros((n*(T-1), n))]) \
+             - np.hstack([np.zeros((n*(T-1), n)), np.eye(n*(T-1))])
+    Ctil12 = np.kron(np.eye(T-1), B)
+    Ctil21 = np.vstack([np.hstack([np.eye(n), np.zeros((n, n*(T-1)))]),
+                        np.hstack([np.zeros((n, n*(T-1))), np.eye(n)])])
+    Ctil22 = np.zeros((2*n, m*(T-1)))
+    Ctil = np.block([[Ctil11, Ctil12],
+                     [Ctil21, Ctil22]])
+    
+    dtil = np.vstack([np.zeros((n*(T-1), q)),
+                      x_init,
+                      x_des])
+    
+    z = cls_solve(Atil, btil, Ctil, dtil)
+    
+    x = [z[i*n:(i+1)*n, :] for i in range(T)]  # list of np.ndarray
+    u = [z[n*T+i*m:n*T+(i+1)*m, :] for i in range(T-1)]  # list of np.ndarray
+    y = [C @ xt for xt in x]  # list of np.ndarray
+    return x, u, y
+
+
+def lqe(A, B, C, y, T, lam):
+    """Linear quadratic state estimation"""
+    n = A.shape[0]  # A.shape = (n, n)
+    m = B.shape[1]  # B.shape = (n, m)
+    p = C.shape[0]  # C.shape = (p, n)
+    
+    Atil = np.block([[np.kron(np.eye(T), C), np.zeros((T*p, m*(T-1)))],
+                     [np.zeros((m*(T-1), T*n)), np.sqrt(lam)*np.eye(m*(T-1))]])
+    
+    # We assume y is a p by T array, so we vectorize it
+    btil = np.block([np.hstack([i for i in y.T]), np.zeros((m*(T-1)))])
+    
+    Ctil = np.block([np.block([np.kron(np.eye(T-1),A), np.zeros((n*(T-1), n))])
+                     + np.block([np.zeros((n*(T-1), n)), -np.eye(n*(T-1))]), np.kron(np.eye(T-1), B)])
+    
+    dtil = np.zeros(n*(T-1))
+    
+    z = cls_solve(Atil, btil, Ctil, dtil)
+    
+    x = [z[i*n:(i+1)*n] for i in range(T)]  # list of np.ndarray
+    u = [z[n*T+i*m : n*T+(i+1)*m] for i in range(T-1)]  # list of np.ndarray
+    y = [C @ xt for xt in x]  # list of np.ndarray
+    return x, u, y
