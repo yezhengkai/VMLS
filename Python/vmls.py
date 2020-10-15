@@ -424,3 +424,105 @@ def lqe(A, B, C, y, T, lam):
     u = [z[n*T+i*m : n*T+(i+1)*m] for i in range(T-1)]  # list of np.ndarray
     y = [C @ xt for xt in x]  # list of np.ndarray
     return x, u, y
+
+
+# ========== chapter 18 ==========
+def gauss_newton(f, Df, x1, kmax=10):
+    x = x1
+    for k in range(kmax):
+        x = x - np.linalg.lstsq(Df(x), f(x))
+    return x
+
+
+def newton(f, Df, x1, kmax=20, tol=1e-6):
+    x = x1
+    fnorms = np.zeros((kmax, 1))
+    for k in range(kmax):
+        fk = f(x)
+        fnorms[k] = np.linalg.norm(fk)
+        if np.linalg.norm(fk) < tol:
+            break
+        x = x - np.linalg.lstsq(np.vstack([Df(x)]),
+                                np.vstack([fk]),
+                                rcond=None)[0]
+    return x, fnorms[:min(k+1, kmax)]
+
+
+def levenberg_marquardt(f, Df, x1, lambda1, kmax=100, tol=1e-6):
+    n = len(x1)
+    x = x1
+    lambda_ = lambda1
+    objectives = np.zeros((kmax, 1))
+    residuals = np.zeros((kmax, 1))
+    for k in range(kmax):
+        fk = f(x)
+        Dfk = Df(x)
+        objectives[k] = np.linalg.norm(fk) ** 2
+        residuals[k] = np.linalg.norm(2 * Dfk.T @ fk)
+        if np.linalg.norm(2 * Dfk.T @ fk) < tol:
+            break
+        xt = x - np.linalg.lstsq(np.vstack([Dfk, np.sqrt(lambda_) * np.eye(n)]),
+                                 np.vstack([fk, np.zeros((n, 1))]),
+                                 rcond=None)[0]
+        if np.linalg.norm(f(xt)) < np.linalg.norm(fk):
+            lambda_ = 0.8 * lambda_
+            x = xt
+        else:
+            lambda_ = 2 * lambda_
+    return x, {"objectives": objectives[:min(k+1, kmax)], "residuals": residuals[:min(k+1, kmax)]}
+
+
+# ========== chapter 19 ==========
+def penalty_method(f, Df, g, Dg, x1, lambda1, kmax=100, feas_tol=1e-4, oc_tol=1e-4):
+    x = x1
+    mu = 1.0
+    #  feasibility condition residual
+    feas_res = np.array([np.linalg.norm(g(x))])
+    # optimal condition residual
+    oc_res = np.array([
+        np.linalg.norm(2 * Df(x).T * f(x)
+                       + 2 * mu * Dg(x).T * g(x))
+    ])
+    lm_iters = []
+    F = lambda x: np.vstack([f(x), np.sqrt(mu)*g(x)])
+    DF = lambda x: np.vstack([Df(x), np.sqrt(mu)*Dg(x)])
+    for k in range(kmax):
+        # minimize norm(F(x)) by levenberg marquardt
+        # F(x) = [f(x); sqrt(mu)*g(x)]
+        x, hist = levenberg_marquardt(F, DF, x, lambda1, tol=oc_tol)
+        feas_res = np.vstack([feas_res, np.linalg.norm(g(x))])
+        oc_res = np.vstack([oc_res, np.array(hist["residuals"])[-1]])
+        lm_iters.append(len(hist["residuals"])) 
+        if np.linalg.norm(g(x)) < feas_tol:
+            break
+        mu = 2*mu
+    return x, {'lm_iterations': lm_iters, 'feas_res': feas_res, 'oc_res': oc_res}
+
+
+def aug_lag_method(f, Df, g, Dg, x1, lambda1, kmax=100, feas_tol=1e-4, oc_tol=1e-4):
+    x = x1
+    z = np.zeros(len(g(x)))
+    mu = 1.0
+    #  feasibility condition residual
+    feas_res = np.array([np.linalg.norm(g(x))])
+    # optimal condition residual
+    oc_res = np.array([
+        np.linalg.norm(2 * Df(x).T * f(x)
+                       + 2 * mu * Dg(x).T * g(x))
+    ])
+    lm_iters = []
+    F = lambda x: np.vstack([f(x), np.sqrt(mu)*(g(x) + z/(2*mu))])
+    DF = lambda x: np.vstack([Df(x), np.sqrt(mu)*Dg(x)])
+    for k in range(kmax):
+        # minimize norm(F(x)) by levenberg marquardt
+        # F(x) = [f(x); sqrt(mu)*(g(x) + z/(2*mu))]
+        x, hist = levenberg_marquardt(F, DF, x, lambda1, tol=oc_tol)
+        z = z + 2*mu*g(x)
+        feas_res = np.vstack([feas_res, np.linalg.norm(g(x))])
+        oc_res = np.vstack([oc_res, np.array(hist["residuals"])[-1]])
+        lm_iters.append(len(hist["residuals"])) 
+        if np.linalg.norm(g(x)) < feas_tol:
+            break
+        if ~(np.linalg.norm(g(x)) < 0.25*feas_res[-2]):
+            mu = 2*mu
+    return x, z, {'lm_iterations': lm_iters, 'feas_res': feas_res, 'oc_res': oc_res}
